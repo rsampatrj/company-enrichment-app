@@ -1,6 +1,5 @@
 streamlit
-pandas
-beautifulsoup4
-requests
-undetected-chromedriver
 selenium
+pandas
+webdriver-manager
+fake-useragent
