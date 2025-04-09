@@ -1,115 +1,94 @@
 import streamlit as st
 import pandas as pd
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from bs4 import BeautifulSoup
 import time
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service as ChromeService
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from fake_useragent import UserAgent
+import re
+import io
 
-# Streamlit UI setup
-st.set_page_config(page_title="Bing Company Enrichment", layout="wide")
-st.title("🔍 Bing Company Enrichment Tool with Selenium")
+# Detect company column
+def detect_company_column(df):
+    for col in df.columns:
+        if "company" in col.lower():
+            return col
+    for col in df.columns:
+        if df[col].apply(lambda x: isinstance(x, str)).mean() > 0.7:
+            return col
+    return df.columns[0]
 
-uploaded_file = st.file_uploader("Upload CSV with Company Names", type=["csv"])
-sample_df = pd.DataFrame({"Company Name": ["Eurostove", "Macflex International Ltd"]})
-st.download_button("⬇️ Download Sample CSV", sample_df.to_csv(index=False), "sample_companies.csv")
-
-# Get Selenium Chrome WebDriver
-def get_driver(user_agent):
-    try:
-        st.write("🚀 Launching Chrome browser...")
-        chrome_options = Options()
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument(f"user-agent={user_agent}")
-        chrome_options.add_argument("--window-size=1920,1080")
-        # Uncomment for headless
-        # chrome_options.add_argument("--headless=new")
-
-        driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=chrome_options)
-        st.write("✅ Chrome browser launched successfully.")
-        return driver
-    except Exception as e:
-        st.error(f"❌ Failed to initialize ChromeDriver: {e}")
-        return None
-
-# Perform Bing search
-def search_bing(driver, company_name, for_linkedin=False):
-    query = f'"{company_name} Linkedin"' if for_linkedin else f'"{company_name}"'
-    search_url = f"https://www.bing.com/search?q={query}"
-    print("Searching:", search_url)
-
-    try:
-        driver.get(search_url)
-        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, "li.b_algo h2 a")))
-
-        # Extract first link
+# Scraper using Playwright
+def scrape_bing_playwright(company, retries=3):
+    for attempt in range(retries):
         try:
-            link_element = driver.find_element(By.CSS_SELECTOR, "li.b_algo h2 a")
-            url = link_element.get_attribute("href")
-        except:
-            url = ""
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+                query = f"https://www.bing.com/search?q=%22{company}%22"
+                page.goto(query, timeout=15000)
+                page.wait_for_timeout(2000)
 
-        # Extract side panel
-        right_panel_data = {"Description": "", "Employee Size": "", "Industry": "", "Headquarters": ""}
-        try:
-            panel = driver.find_element(By.ID, "b_context")
-            panel_text = panel.text
-            for line in panel_text.split("\n"):
-                if "Headquarters" in line:
-                    right_panel_data["Headquarters"] = line.split(":")[-1].strip()
-                elif "Industry" in line:
-                    right_panel_data["Industry"] = line.split(":")[-1].strip()
-                elif "Employees" in line:
-                    right_panel_data["Employee Size"] = line.split(":")[-1].strip()
-                elif not right_panel_data["Description"]:
-                    right_panel_data["Description"] = line.strip()
-        except:
-            pass
+                soup = BeautifulSoup(page.content(), "html.parser")
+                browser.close()
 
-        return url, right_panel_data
+                # Top result
+                top = soup.find("li", class_="b_algo")
+                top_title = top.find("h2").text.strip() if top else ""
+                top_url = top.find("a")["href"] if top else ""
+                top_snippet = top.find("p").text.strip() if top and top.find("p") else ""
 
-    except Exception as e:
-        st.warning(f"⚠️ Failed for {company_name}: {e}")
-        return "", {"Description": "", "Employee Size": "", "Industry": "", "Headquarters": ""}
+                # Right panel
+                panel = soup.find("div", class_="b_entityTP")
+                summary_data = {}
+                if panel:
+                    for row in panel.find_all("div", class_="b_vList"):
+                        label = row.find("div", class_="b_term") or row.find("div", class_="b_snippetTitle")
+                        value = row.find("div", class_="b_def") or row.find("div", class_="b_snippetValue")
+                        if label and value:
+                            summary_data[label.text.strip()] = value.text.strip()
 
-# Main processing
+                return {
+                    "Company": company,
+                    "Top Result Title": top_title,
+                    "Top Result URL": top_url,
+                    "Top Result Snippet": top_snippet,
+                    **summary_data
+                }
+
+        except PlaywrightTimeout as e:
+            time.sleep(2)
+            if attempt == retries - 1:
+                return {
+                    "Company": company,
+                    "Top Result Title": "TIMEOUT",
+                    "Top Result URL": "",
+                    "Top Result Snippet": str(e)
+                }
+
+# Streamlit App
+st.title("🚀 Fast Company Info Scraper (Playwright + Bing)")
+
+uploaded_file = st.file_uploader("Upload CSV with company names", type="csv")
+
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    results = []
-    progress = st.progress(0)
+    company_col = detect_company_column(df)
+    companies = df[company_col].dropna().unique().tolist()
+    st.success(f"Detected company column: **{company_col}** with {len(companies)} entries")
 
-    ua = UserAgent()
-    user_agent = ua.random
-    driver = get_driver(user_agent)
+    if st.button("Start Scraping"):
+        results = []
+        progress_bar = st.progress(0)
+        status = st.empty()
 
-    if driver:
-        for i, row in df.iterrows():
-            company = row["Company Name"]
-            if i % 5 == 0:
-                st.write(f"🔍 Searching: {company}")
+        for i, company in enumerate(companies):
+            status.text(f"Scraping: {company} ({i+1}/{len(companies)})")
+            result = scrape_bing_playwright(company)
+            results.append(result)
+            progress_bar.progress((i + 1) / len(companies))
 
-            website_url, _ = search_bing(driver, company)
-            linkedin_url, meta = search_bing(driver, company, for_linkedin=True)
-
-            results.append({
-                "Company Name": company,
-                "Website URL": website_url,
-                "LinkedIn URL": linkedin_url,
-                "LinkedIn Description": meta["Description"],
-                "Employee Size": meta["Employee Size"],
-                "Industry": meta["Industry"],
-                "HQ Location": meta["Headquarters"],
-            })
-            progress.progress((i + 1) / len(df))
-
-        driver.quit()
         result_df = pd.DataFrame(results)
-        st.success("✅ Enrichment Complete")
+        st.success("✅ All done!")
         st.dataframe(result_df)
-        st.download_button("📥 Download Results", result_df.to_csv(index=False), "enriched_results.csv")
+
+        csv = result_df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download CSV", data=csv, file_name="bing_results.csv", mime="text/csv")
