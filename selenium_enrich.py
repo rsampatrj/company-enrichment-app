@@ -18,31 +18,30 @@ sample_df = pd.DataFrame({"Company Name": ["Eurostove", "Macflex International L
 st.download_button("⬇️ Download Sample CSV", sample_df.to_csv(index=False), "sample_companies.csv")
 
 def get_driver(user_agent):
-    chrome_options = ChromeOptions()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument(f"user-agent={user_agent}")
-    chrome_options.add_argument("--window-size=1920,1080")
-
-    driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=chrome_options)
-    return driver
+    try:
+        chrome_options = ChromeOptions()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument(f"user-agent={user_agent}")
+        chrome_options.add_argument("--window-size=1920,1080")
+        driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=chrome_options)
+        return driver
+    except Exception as e:
+        st.error(f"❌ Failed to initialize ChromeDriver: {e}")
+        return None
 
 def search_bing(driver, company_name, for_linkedin=False):
     query = f'"{company_name} Linkedin"' if for_linkedin else f'"{company_name}"'
     search_url = f"https://www.bing.com/search?q={query}"
-
     try:
         driver.get(search_url)
         WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, "li.b_algo h2 a")))
-
         try:
             link_element = driver.find_element(By.CSS_SELECTOR, "li.b_algo h2 a")
             url = link_element.get_attribute("href")
         except:
             url = ""
-
         right_panel_data = {"Description": "", "Employee Size": "", "Industry": "", "Headquarters": ""}
         try:
             panel = driver.find_element(By.ID, "b_context")
@@ -58,9 +57,7 @@ def search_bing(driver, company_name, for_linkedin=False):
                     right_panel_data["Description"] = line.strip()
         except:
             pass
-
         return url, right_panel_data
-
     except Exception as e:
         st.warning(f"⚠️ Failed to get results for {company_name}: {e}")
         return "", {"Description": "", "Employee Size": "", "Industry": "", "Headquarters": ""}
@@ -69,11 +66,9 @@ if uploaded_file:
     df = pd.read_csv(uploaded_file)
     results = []
     progress = st.progress(0)
-
     ua = UserAgent()
     user_agent = ua.random
     driver = get_driver(user_agent)
-
     if driver:
         for i, row in df.iterrows():
             company = row["Company Name"]
@@ -81,7 +76,6 @@ if uploaded_file:
                 st.write(f"🔎 Searching: {company}")
             website_url, _ = search_bing(driver, company)
             linkedin_url, meta = search_bing(driver, company, for_linkedin=True)
-
             results.append({
                 "Company Name": company,
                 "Website URL": website_url,
@@ -92,7 +86,6 @@ if uploaded_file:
                 "HQ Location": meta["Headquarters"],
             })
             progress.progress((i + 1) / len(df))
-
         driver.quit()
         result_df = pd.DataFrame(results)
         st.success("✅ Enrichment Complete")
