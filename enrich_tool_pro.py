@@ -1,70 +1,74 @@
-import streamlit as st 
+import streamlit as st
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 import re
 import time
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse, quote
+from urllib.parse import quote_plus
 
-st.set_page_config(page_title="Company Enrichment Tool (v3)", layout="wide")
-st.title("🌐 Company Enrichment Tool (v3) — Brave Search")
+st.set_page_config(page_title="Bing Company Enrichment Tool", layout="wide")
+st.title("🔎 Company Enrichment via Bing")
 
-uploaded_file = st.file_uploader("📁 Upload CSV with Company Names", type=["csv"])
-sample_df = pd.DataFrame({"Company Name": ["Walford Timber Limited", "Oak Student Letts", "Globescan Incorporated"]})
-st.download_button("⬇️ Download Sample CSV", sample_df.to_csv(index=False), "sample_companies.csv")
+uploaded_file = st.file_uploader("📤 Upload CSV with 'Company Name'", type="csv")
+sample_df = pd.DataFrame({"Company Name": ["Eurostove", "Walford Timber Limited"]})
+st.download_button("⬇️ Sample CSV", sample_df.to_csv(index=False), "sample_companies.csv")
 
-@st.cache
-def search_brave(company_name):
-    encoded_query = quote(f'"{company_name}"')
-    url = f"https://search.brave.com/search?q={encoded_query}&source=web"
-    headers = {"User-Agent": "Mozilla/5.0"}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+def bing_search(query):
+    encoded = quote_plus(query)
+    url = f"https://www.bing.com/search?q={encoded}"
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
-        result_link = soup.select_one("a.result-header")
-        return result_link['href'] if result_link else ""
-    except:
-        return ""
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-@st.cache
-def clearbit_autocomplete(company_name):
-    try:
-        url = f"https://autocomplete.clearbit.com/v1/companies/suggest?query={company_name}"
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
-        if data:
-            return data[0].get("domain", ""), data[0].get("logo", "")
-        return "", ""
-    except:
-        return "", ""
+        # Top result
+        link_tag = soup.select_one("li.b_algo h2 a")
+        top_link = link_tag['href'] if link_tag else ""
+
+        # Knowledge panel (LinkedIn specific info)
+        panel = soup.select_one("div.b_entityTP")
+        panel_text = panel.get_text(separator="\n") if panel else ""
+        desc = re.search(r'About\n(.*?)\n', panel_text, re.DOTALL)
+        employees = re.search(r'Employees\n(.*?)\n', panel_text)
+        industry = re.search(r'Industry\n(.*?)\n', panel_text)
+        hq = re.search(r'Headquarters\n(.*?)\n', panel_text)
+
+        return {
+            "top_link": top_link,
+            "description": desc.group(1).strip() if desc else "",
+            "employees": employees.group(1).strip() if employees else "",
+            "industry": industry.group(1).strip() if industry else "",
+            "hq": hq.group(1).strip() if hq else "",
+        }
+    except Exception as e:
+        return {"top_link": "", "description": "", "employees": "", "industry": "", "hq": ""}
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
     results = []
     progress = st.progress(0)
+
     for i, row in df.iterrows():
-        company = row["Company Name"]
-        domain, logo = clearbit_autocomplete(company)
+        name = row["Company Name"]
 
-        website_url = search_brave(company)
-        if not domain:
-            domain = urlparse(website_url).netloc
-        if not website_url and domain:
-            website_url = f"https://{domain}"
-
-        linkedin_url = search_brave(f"{company} Linkedin")
+        site_result = bing_search(f'"{name}"')
+        linkedin_result = bing_search(f'"{name}" Linkedin')
 
         results.append({
-            "Input Company Name": company,
-            "Matched Domain": domain,
-            "Website URL": website_url,
-            "LinkedIn URL": linkedin_url,
-            "Logo URL": logo
+            "Input Company Name": name,
+            "Matched Domain": site_result["top_link"],
+            "Website URL": site_result["top_link"],
+            "LinkedIn URL": linkedin_result["top_link"],
+            "LinkedIn Description": linkedin_result["description"],
+            "Employee Size": linkedin_result["employees"],
+            "Industry": linkedin_result["industry"],
+            "Headquarters": linkedin_result["hq"]
         })
         progress.progress((i + 1) / len(df))
-        time.sleep(0.3)
+        time.sleep(0.5)
 
     result_df = pd.DataFrame(results)
-    st.success("✅ Enrichment Complete")
+    st.success("✅ Enrichment Completed")
     st.dataframe(result_df)
-    st.download_button("📥 Download Results", result_df.to_csv(index=False), "enriched_results.csv")
+    st.download_button("📥 Download Enriched CSV", result_df.to_csv(index=False), "bing_enriched_results.csv")
