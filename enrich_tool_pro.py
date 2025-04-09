@@ -5,16 +5,19 @@ import re
 import time
 from urllib.parse import urlparse, unquote
 from bs4 import BeautifulSoup
+from difflib import SequenceMatcher
 
 st.set_page_config(page_title="Company Enrichment Tool (Brave Search Only)", layout="wide")
-st.title("🦁 Company Enrichment Tool — Brave Search Only")
+st.title("🦁 Company Enrichment Tool — Brave Search Only (Smart Matching)")
 
 uploaded_file = st.file_uploader("Upload CSV with Company Names", type=["csv"])
 sample_df = pd.DataFrame({"Company Name": ["Walford Timber Limited", "Oak Student Letts", "Globescan Incorporated"]})
 st.download_button("⬇️ Download Sample CSV", sample_df.to_csv(index=False), "sample_companies.csv")
 
-@st.cache_data(show_spinner=False)
-def search_brave(company_name, site_filter=None):
+def is_similar(a, b):
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+def smart_brave_search(company_name, site_filter=None, max_results=10):
     headers = {"User-Agent": "Mozilla/5.0"}
     query = f"{company_name}"
     if site_filter:
@@ -23,12 +26,20 @@ def search_brave(company_name, site_filter=None):
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, "html.parser")
-        links = []
+        results = []
         for a in soup.find_all("a", href=True):
             href = a["href"]
+            text = a.get_text()
             if href.startswith("http") and not any(skip in href for skip in ["brave.com", "youtube.com"]):
-                links.append(href)
-        return links[0] if links else ""
+                domain = urlparse(href).netloc
+                score = is_similar(company_name, domain) + is_similar(company_name, text)
+                results.append((score, href))
+            if len(results) >= max_results:
+                break
+        if results:
+            results.sort(reverse=True)
+            return results[0][1]  # return URL with best score
+        return ""
     except:
         return ""
 
@@ -39,10 +50,10 @@ if uploaded_file:
     for i, row in df.iterrows():
         company = row["Company Name"]
 
-        website_url = search_brave(company)
+        website_url = smart_brave_search(company)
         domain = urlparse(website_url).netloc if website_url else ""
 
-        linkedin_url = search_brave(company, site_filter="linkedin.com")
+        linkedin_url = smart_brave_search(company, site_filter="linkedin.com")
 
         results.append({
             "Input Company Name": company,
