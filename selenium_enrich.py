@@ -1,51 +1,57 @@
-import streamlit as st
+import streamlit as st 
 import pandas as pd
 import time
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+import requests
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 
-st.set_page_config(page_title="Company Enrichment Tool", layout="wide")
-st.title("🔍 Company Enrichment with Bing + Selenium")
+st.set_page_config(page_title="Company Enrichment Tool (Selenium + Bing)", layout="wide")
+st.title("🌐 Company Enrichment Tool — Selenium + Bing (Headless Chrome)")
 
 @st.cache_resource
 def init_driver():
-    options = Options()
-    options.add_argument("--headless")
+    options = uc.ChromeOptions()
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(options=options)
+    options.add_argument("--disable-gpu")
+    driver = uc.Chrome(options=options)
     return driver
 
-driver = init_driver()
-
-def bing_search(company):
-    driver.get(f"https://www.bing.com/search?q={company}")
-    time.sleep(2)
-    try:
-        result = driver.find_element(By.CSS_SELECTOR, "li.b_algo h2 a")
-        return result.get_attribute("href")
-    except:
-        return ""
+def search_bing(driver, query):
+    driver.get(f"https://www.bing.com/search?q=%7B%22{query}%22%7D")
+    time.sleep(3)
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    first_result = soup.select_one("li.b_algo h2 a")
+    return first_result["href"] if first_result else ""
 
 uploaded_file = st.file_uploader("Upload CSV with Company Names", type=["csv"])
+sample_df = pd.DataFrame({"Company Name": ["Eurostove", "Walford Timber Limited"]})
+st.download_button("⬇️ Download Sample CSV", sample_df.to_csv(index=False), "sample_companies.csv")
+
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
+    driver = init_driver()
     results = []
     progress = st.progress(0)
-
     for i, row in df.iterrows():
         company = row["Company Name"]
-        domain_url = bing_search(company)
-        linkedin_url = bing_search(f"{company} linkedin")
+        website_url = search_bing(driver, company)
+        domain = urlparse(website_url).netloc if website_url else ""
+        linkedin_url = search_bing(driver, f"{company} Linkedin")
 
         results.append({
-            "Company Name": company,
-            "Website URL": domain_url,
+            "Input Company Name": company,
+            "Matched Domain": domain,
+            "Website URL": website_url,
             "LinkedIn URL": linkedin_url
         })
         progress.progress((i + 1) / len(df))
+        time.sleep(0.3)
 
     result_df = pd.DataFrame(results)
+    st.success("✅ Enrichment Complete")
     st.dataframe(result_df)
-    st.download_button("📥 Download", result_df.to_csv(index=False), "results.csv")
+    st.download_button("📥 Download Results", result_df.to_csv(index=False), "enriched_results.csv")
