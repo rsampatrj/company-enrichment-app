@@ -1,3 +1,6 @@
 streamlit
-selenium
 pandas
+selenium
+beautifulsoup4
+requests
+undetected-chromedriver
