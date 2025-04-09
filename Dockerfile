@@ -1,15 +1,13 @@
-# Use a lightweight Python image
 FROM python:3.10-slim
 
-# Avoid prompts during apt-get installs
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies for Selenium and Chromium
+# Install dependencies
 RUN apt-get update && apt-get install -y \
-    curl \
-    gnupg \
-    unzip \
     wget \
+    curl \
+    unzip \
+    gnupg \
     chromium-driver \
     chromium \
     libglib2.0-0 \
@@ -17,22 +15,26 @@ RUN apt-get update && apt-get install -y \
     libgconf-2-4 \
     libxss1 \
     libasound2 \
-    libxtst6 \
-    libxrandr2 \
-    libappindicator1 \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    fonts-liberation \
+    libappindicator1 \
+    libdbus-glib-1-2 \
+    libxrandr2 \
+    --no-install-recommends && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Environment variables for Chromium
 ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_BIN=/usr/bin/chromedriver
+ENV CHROMEDRIVER=/usr/bin/chromedriver
 
-# Set working directory
+# Set working dir
 WORKDIR /app
 
-# Copy the app files into the container
+# Copy files
 COPY . .
 
-# Install Python packages
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Start the Streamlit app
+CMD ["streamlit", "run", "selenium_enrich.py", "--server.port=8501", "--server.enableCORS=false"]
