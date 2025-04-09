@@ -1,5 +1,2 @@
-streamlit
-selenium
-pandas
-webdriver-manager
-fake-useragent
+pip install streamlit pandas beautifulsoup4 playwright
+playwright install
