@@ -1,10 +1,4 @@
 streamlit
 pandas
 requests
-beautifulsoup4
-whois
-tldextract
-fuzzywuzzy
-geopy
-openpyxl
-python-Levenshtein
+python-whois
