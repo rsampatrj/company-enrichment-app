@@ -17,9 +17,6 @@ st.download_button("⬇️ Download Sample CSV", sample_df.to_csv(index=False), 
 def is_similar(a, b):
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-def clean_company_name(name):
-    return re.sub(r"[^a-z0-9]", "", name.lower())
-
 def smart_brave_search(company_name, site_filter=None, max_results=10):
     headers = {"User-Agent": "Mozilla/5.0"}
     query = f"{company_name}"
@@ -30,23 +27,13 @@ def smart_brave_search(company_name, site_filter=None, max_results=10):
         resp = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(resp.text, "html.parser")
         results = []
-        company_clean = clean_company_name(company_name)
         for a in soup.find_all("a", href=True):
             href = a["href"]
             text = a.get_text()
-            if not href.startswith("http"):
-                continue
-            parsed = urlparse(href)
-            domain = parsed.netloc
-            if any(skip in domain for skip in ["brave.com", "reddit.com", "youtube.com", "torproject.org"]):
-                continue
-            domain_clean = clean_company_name(domain.split(".")[0])
-            score = 0
-            if company_clean in domain_clean:
-                score += 1.0
-            score += is_similar(company_clean, domain_clean)
-            score += is_similar(company_name, text)
-            results.append((score, href))
+            if href.startswith("http") and not any(skip in href for skip in ["brave.com", "youtube.com"]):
+                domain = urlparse(href).netloc
+                score = is_similar(company_name, domain) + is_similar(company_name, text)
+                results.append((score, href))
             if len(results) >= max_results:
                 break
         if results:
