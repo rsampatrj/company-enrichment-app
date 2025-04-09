@@ -27,11 +27,11 @@ def search_google_cache(company_name):
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             links = re.findall(r'href=["\'](.*?)["\']', resp.text)
-            filtered = [l for l in links if any(domain in l for domain in ['.com', '.co.uk']) and not any(x in l for x in ['google', 'youtube', 'facebook', 'twitter', 'amazon'])]
-            filtered = [extract_real_url(l) or l for l in filtered]
-            return list(set([f for f in filtered if f.startswith("http")]))[:3]
+            filtered = [l for l in links if 'http' in l and not any(x in l for x in ['google', 'youtube', 'facebook', 'twitter', 'amazon'])]
+            final_links = [extract_real_url(l) or l for l in filtered]
+            return list(set(final_links))[:3]
         return []
-    except Exception:
+    except Exception as e:
         return []
 
 @st.cache_data(show_spinner=False)
@@ -61,10 +61,11 @@ if uploaded_file:
     for i, row in df.iterrows():
         company = row["Company Name"]
         links = search_google_cache(company)
-        domain = urlparse(links[0]).netloc if links else ""
         website = links[0] if links else ""
+        domain = urlparse(website).netloc if website else ""
         info = get_domain_info(domain) if domain else {}
         logo_url = get_logo(domain)
+
         results.append({
             "Input Company Name": company,
             "Matched Domain": domain,
@@ -76,7 +77,8 @@ if uploaded_file:
             "Logo URL": logo_url
         })
         progress.progress((i + 1) / len(df))
-        time.sleep(0.5)
+        time.sleep(0.2)
+
     result_df = pd.DataFrame(results)
     st.success("✅ Enrichment Complete")
     st.dataframe(result_df)
