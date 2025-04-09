@@ -2,57 +2,41 @@ import streamlit as st
 import pandas as pd
 import requests
 import re
-from urllib.parse import unquote, urlparse
-import whois
 import time
+from urllib.parse import urlparse
 
-st.set_page_config(page_title="Company Enrichment Tool", layout="wide")
-st.title("🧠 Company Enrichment Tool (v2) — Google Cache Edition")
+st.set_page_config(page_title="Company Enrichment Tool (v3)", layout="wide")
+st.title("🌐 Company Enrichment Tool (v3) — DuckDuckGo + Clearbit")
 
 uploaded_file = st.file_uploader("Upload CSV with Company Names", type=["csv"])
 sample_df = pd.DataFrame({"Company Name": ["Walford Timber Limited", "Oak Student Letts", "Globescan Incorporated"]})
 st.download_button("⬇️ Download Sample CSV", sample_df.to_csv(index=False), "sample_companies.csv")
 
-@st.cache_data(show_spinner=False)
-def extract_real_url(google_url):
-    match = re.search(r"/url\\?q=(https?://[^&]+)", google_url)
-    return unquote(match.group(1)) if match else None
-
 @st.cache_data(show_spinner=True)
-def search_google_cache(company_name):
-    query = company_name.strip().replace(" ", "%20")
-    url = f"https://webcache.googleusercontent.com/search?q=cache:{query}"
+def search_duckduckgo(company_name, site_filter=None):
+    query = company_name
+    if site_filter:
+        query += f" site:{site_filter}"
     headers = {"User-Agent": "Mozilla/5.0"}
+    url = f"https://html.duckduckgo.com/html/?q={query}"
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            links = re.findall(r'href=["\'](.*?)["\']', resp.text)
-            filtered = [l for l in links if 'http' in l and not any(x in l for x in ['google', 'youtube', 'facebook', 'twitter', 'amazon'])]
-            final_links = [extract_real_url(l) or l for l in filtered]
-            return list(set(final_links))[:3]
-        return []
-    except Exception as e:
-        return []
+        resp = requests.post(url, headers=headers, timeout=10)
+        links = re.findall(r'<a rel="nofollow" class="result__a" href="(.*?)"', resp.text)
+        return links[0] if links else ""
+    except:
+        return ""
 
 @st.cache_data(show_spinner=False)
-def get_domain_info(domain):
+def clearbit_autocomplete(company_name):
     try:
-        w = whois.whois(domain)
-        return {
-            "WHOIS Created": w.creation_date,
-            "WHOIS Expiry": w.expiration_date,
-            "WHOIS Registrar": w.registrar,
-        }
-    except Exception:
-        return {
-            "WHOIS Created": "",
-            "WHOIS Expiry": "",
-            "WHOIS Registrar": "",
-        }
-
-@st.cache_data(show_spinner=False)
-def get_logo(domain):
-    return f"https://logo.clearbit.com/{domain}" if domain else ""
+        url = f"https://autocomplete.clearbit.com/v1/companies/suggest?query={company_name}"
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        if data:
+            return data[0].get("domain", ""), data[0].get("logo", "")
+        return "", ""
+    except:
+        return "", ""
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
@@ -60,24 +44,25 @@ if uploaded_file:
     progress = st.progress(0)
     for i, row in df.iterrows():
         company = row["Company Name"]
-        links = search_google_cache(company)
-        website = links[0] if links else ""
-        domain = urlparse(website).netloc if website else ""
-        info = get_domain_info(domain) if domain else {}
-        logo_url = get_logo(domain)
+        domain, logo = clearbit_autocomplete(company)
+
+        if not domain:
+            website_url = search_duckduckgo(company)
+            domain = urlparse(website_url).netloc
+        else:
+            website_url = f"https://{domain}"
+
+        linkedin_url = search_duckduckgo(company, site_filter="linkedin.com")
 
         results.append({
             "Input Company Name": company,
             "Matched Domain": domain,
-            "Website URL": website,
-            "Confidence Score": len(links) * 10,
-            "WHOIS Created": info.get("WHOIS Created"),
-            "WHOIS Expiry": info.get("WHOIS Expiry"),
-            "WHOIS Registrar": info.get("WHOIS Registrar"),
-            "Logo URL": logo_url
+            "Website URL": website_url,
+            "LinkedIn URL": linkedin_url,
+            "Logo URL": logo
         })
         progress.progress((i + 1) / len(df))
-        time.sleep(0.2)
+        time.sleep(0.3)
 
     result_df = pd.DataFrame(results)
     st.success("✅ Enrichment Complete")
