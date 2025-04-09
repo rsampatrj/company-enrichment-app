@@ -1,5 +1,5 @@
 streamlit
 selenium
-webdriver-manager
-fake-useragent
 pandas
+fake-useragent
+webdriver-manager
