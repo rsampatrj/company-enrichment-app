@@ -2,7 +2,7 @@ streamlit
 pandas
 requests
 beautifulsoup4
-whois  # Changed from python-whois
+whois
 tldextract
 fuzzywuzzy
 geopy
