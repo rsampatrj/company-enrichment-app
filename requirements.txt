@@ -1,9 +1,0 @@
-streamlit
-pandas
-requests
-beautifulsoup4
-python-whois
-fuzzywuzzy
-openpyxl
-tldextract
-geopy
