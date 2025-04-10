@@ -1,2 +1,5 @@
-pip install streamlit pandas beautifulsoup4 playwright
-playwright install
+streamlit
+pandas
+beautifulsoup4
+lxml
+selenium
