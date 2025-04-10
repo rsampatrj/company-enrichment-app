@@ -7,7 +7,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz
-import os, time, shutil
+import time
 
 # 1. Setup Headless Browser
 def init_driver():
@@ -55,11 +55,6 @@ def scrape_bing(company, retries=3):
             match_score = best_match(company, [top_title, top_snippet])
             status = "Match" if match_score > 60 else "Low confidence"
 
-            # Save HTML snapshot
-            os.makedirs("html_snapshots", exist_ok=True)
-            with open(f"html_snapshots/{company.replace(' ', '_')}.html", "w", encoding="utf-8") as f:
-                f.write(page_source)
-
             return {
                 "Company": company,
                 "Top Result Title": top_title,
@@ -82,7 +77,7 @@ def scrape_bing(company, retries=3):
                     "Status": "Failed"
                 }
 
-# 4. Try to auto-detect the "Company" column
+# 4. Auto-detect "Company" column
 def detect_company_column(df):
     for col in df.columns:
         if "company" in col.lower():
@@ -93,7 +88,7 @@ def detect_company_column(df):
     return df.columns[0]
 
 # 5. Streamlit App UI
-st.title("🔍 Enhanced Bing Company Info Scraper")
+st.title("🔍 Bing Company Info Scraper (CSV Output Only)")
 
 uploaded_file = st.file_uploader("Upload a CSV with company names", type="csv")
 
@@ -121,8 +116,3 @@ if uploaded_file:
         # CSV Download
         csv = result_df.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Download CSV", data=csv, file_name="bing_company_results.csv", mime="text/csv")
-
-        # HTML Snapshot ZIP
-        shutil.make_archive("html_snapshots", 'zip', "html_snapshots")
-        with open("html_snapshots.zip", "rb") as f:
-            st.download_button("📄 Download HTML Snapshots", f, "html_snapshots.zip", mime="application/zip")
