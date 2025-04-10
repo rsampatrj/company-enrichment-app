@@ -1,4 +1,3 @@
-import streamlit as st
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -14,13 +13,11 @@ def fetch_bing_results(company):
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, "lxml")
 
-        # Top result
         top_result = soup.find("li", class_="b_algo")
         title = top_result.find("h2").text if top_result else ""
         link = top_result.find("a")["href"] if top_result else ""
         snippet = top_result.find("p").text if top_result and top_result.find("p") else ""
 
-        # Side panel / knowledge panel
         panel = soup.find("div", class_="b_entityTP")
         knowledge = {}
         if panel:
@@ -56,29 +53,24 @@ def detect_company_column(df):
             return col
     return df.columns[0]
 
-st.title("🔍 Bing Company Info Scraper (Replit Compatible)")
-
-uploaded = st.file_uploader("Upload a CSV with company names", type=["csv"])
-
-if uploaded:
-    df = pd.read_csv(uploaded)
+def main(input_csv="input.csv", output_csv="output.csv"):
+    df = pd.read_csv(input_csv)
     company_col = detect_company_column(df)
     companies = df[company_col].dropna().unique().tolist()
 
-    st.success(f"Found {len(companies)} companies in column: {company_col}")
+    print(f"[INFO] Detected company column: {company_col}")
+    print(f"[INFO] Found {len(companies)} companies to process...")
 
-    if st.button("Start Scraping"):
-        results = []
-        bar = st.progress(0)
+    results = []
+    for i, company in enumerate(companies):
+        print(f"[{i+1}/{len(companies)}] Scraping: {company}")
+        result = fetch_bing_results(company)
+        results.append(result)
+        time.sleep(1)
 
-        for i, company in enumerate(companies):
-            result = fetch_bing_results(company)
-            results.append(result)
-            bar.progress((i + 1) / len(companies))
-            time.sleep(1)  # avoid rate limiting
+    result_df = pd.DataFrame(results)
+    result_df.to_csv(output_csv, index=False)
+    print(f"[DONE] Results saved to {output_csv}")
 
-        result_df = pd.DataFrame(results)
-        st.dataframe(result_df)
-
-        csv = result_df.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Download CSV", data=csv, file_name="bing_results.csv", mime="text/csv")
+if __name__ == "__main__":
+    main()
