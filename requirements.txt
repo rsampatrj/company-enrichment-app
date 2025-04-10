@@ -2,6 +2,4 @@ streamlit
 pandas
 beautifulsoup4
 lxml
-selenium
-webdriver-manager
 rapidfuzz
