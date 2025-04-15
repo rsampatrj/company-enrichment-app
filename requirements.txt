@@ -1,4 +1,5 @@
-streamlit
-duckduckgo-search
-pandas
-openpyxl
+langchain-community>=0.0.25
+duckduckgo-search>=3.9.2
+pandas>=2.0.3
+openpyxl>=3.1.2
+streamlit>=1.28.0
