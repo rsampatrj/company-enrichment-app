@@ -1,174 +1,196 @@
 import streamlit as st
-from duckduckgo_search import DDGS
+from duckduckgo_search import DDGS, exceptions as ddg_exceptions
 import pandas as pd
 from urllib.parse import urlparse
 import time
-from io import BytesIO
-import concurrent.futures
-import re
+import argparse
+import os
+import random
 
-# Configuration
-MAX_WORKERS = 3  # Reduced to avoid rate limiting
-BATCH_SIZE = 10
-REQUEST_DELAY = 2
-MAX_RETRIES = 2
+# Constants
+CHECKPOINT_FILE = "checkpoint.xlsx"
+MAX_RETRIES = 3
+BASE_DELAY = 5
+RATE_LIMIT_DELAY = 60  # Wait 1 minute if rate limited
+REQUESTS_PER_BATCH = 20
+BATCH_DELAY = 60  # Wait 1 minute after each batch
 
 def extract_domain(url):
-    try:
-        parsed = urlparse(url)
-        if parsed.scheme not in ('http', 'https'):
-            return "Not found"
-        domain = parsed.netloc
-        return re.sub(r'^www\.', '', domain).lower()
-    except:
-        return "Not found"
+    """Extract domain from URL"""
+    parsed = urlparse(url)
+    domain = parsed.netloc
+    if domain.startswith('www.'):
+        domain = domain[4:]
+    return domain
 
-class EnhancedCompanySearcher:
-    def __init__(self):
-        self.ddgs = DDGS()
-        self.search_cache = {}
-        
-    def search_with_retry(self, query, max_results=1):
-        """Search with retry and cache mechanism"""
-        if query in self.search_cache:
-            return self.search_cache[query]
-            
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                results = self.ddgs.text(query, max_results=max_results)
-                if results:
-                    self.search_cache[query] = results
-                    return results
-                time.sleep(1 * attempt)  # Increasing delay
-            except Exception as e:
-                st.warning(f"Attempt {attempt+1} failed for '{query}': {str(e)}")
-                time.sleep(2)
-        return []
-
-    def find_company_website(self, company):
-        """Improved website search with multiple strategies"""
-        strategies = [
-            f'"{company}" official website',
-            f'{company} contact',
-            f'site:{company.replace(" ", "").lower()}.com'
-        ]
-        
-        for query in strategies:
-            results = self.search_with_retry(query)
-            for result in results:
-                if any(kw in result['title'].lower() for kw in ['home', 'official', 'website', 'company']):
-                    return result
-            time.sleep(0.5)
-        return {}
-
-    def find_linkedin_profile(self, company):
-        """Improved LinkedIn search with multiple patterns"""
-        patterns = [
-            f'site:linkedin.com/company "{company}"',
-            f'{company} linkedin',
-            f'{company} | LinkedIn'
-        ]
-        
-        for query in patterns:
-            results = self.search_with_retry(query)
-            for result in results:
-                if 'linkedin.com/company' in result['href'].lower():
-                    return result
-            time.sleep(0.5)
-        return {}
-
-    def process_company(self, company):
-        """Enhanced processing with fallback logic"""
+def search_with_retry(query_func, *args, **kwargs):
+    """Generic retry wrapper with exponential backoff"""
+    for attempt in range(MAX_RETRIES):
         try:
-            # Get website info
-            website_result = self.find_company_website(company)
-            domain = extract_domain(website_result.get('href', ''))
-            website_name = website_result.get('title', 'Not found')
-            
-            # Get LinkedIn info
-            linkedin_result = self.find_linkedin_profile(company)
-            linkedin_url = linkedin_result.get('href', 'Not found')
-            linkedin_name = linkedin_result.get('title', 'Not found').split('|')[0].strip()
-            
-            return {
-                'company': company,
-                'domain': domain,
-                'website_name': website_name,
-                'linkedin_url': linkedin_url,
-                'linkedin_name': linkedin_name
-            }
+            return query_func(*args, **kwargs)
+        except ddg_exceptions.DuckDuckGoSearchException as e:
+            if 'Ratelimit' in str(e):
+                sleep_time = BASE_DELAY * (2 ** attempt) + random.uniform(0, 2)
+                print(f"Rate limited. Attempt {attempt+1}/{MAX_RETRIES}. Waiting {sleep_time:.1f}s")
+                time.sleep(sleep_time)
+                continue
+            raise
         except Exception as e:
-            st.error(f"Critical error processing {company}: {str(e)}")
-            return self.empty_result(company)
+            print(f"Error: {str(e)}")
+            break
+    return None
 
-    def empty_result(self, company):
-        return {
-            'company': company,
-            'domain': 'Not found',
-            'website_name': 'Not found',
-            'linkedin_url': 'Not found',
-            'linkedin_name': 'Not found'
-        }
+def search_company_info(company_name, ddgs):
+    """Search for company website and name using DuckDuckGo"""
+    try:
+        results = search_with_retry(ddgs.text, company_name, max_results=1)
+        if results:
+            first_result = results[0]
+            return {
+                'domain': extract_domain(first_result['href']),
+                'name': first_result['title']
+            }
+    except Exception as e:
+        print(f"Error searching for {company_name}: {str(e)}")
+    return {'domain': 'Not found', 'name': 'Not found'}
 
-def process_batch(searcher, batch):
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(searcher.process_company, company): company for company in batch}
-        for future in concurrent.futures.as_completed(futures):
-            results.append(future.result())
-    time.sleep(REQUEST_DELAY)
-    return results
+def search_linkedin(query, ddgs):
+    """Generic LinkedIn search using DuckDuckGo"""
+    try:
+        results = search_with_retry(ddgs.text, query, max_results=1)
+        if results:
+            first_result = results[0]
+            linkedin_url = first_result['href']
+            linkedin_name = first_result['title'].split('|')[0].strip()
+            return {'linkedin_url': linkedin_url, 'linkedin_name': linkedin_name}
+    except Exception as e:
+        print(f"Error searching LinkedIn for {query}: {str(e)}")
+    return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
 
-def main():
-    st.title("Enhanced Company Finder")
-    st.write("Upload a CSV/text file with company names (max 100)")
+def process_company(company, ddgs):
+    """Process a single company and return all results"""
+    company_info = search_company_info(company, ddgs)
+    time.sleep(random.uniform(1, 3))  # Randomized delay
+
+    # Original LinkedIn search
+    linkedin_original = search_linkedin(f"{company} | LinkedIn", ddgs)
+    time.sleep(random.uniform(1, 3))
+
+    # Site Company search
+    site_company_search = (f"{company_info['name']} | LinkedIn" 
+                          if company_info['name'] != 'Not found' 
+                          else "Invalid Company Name")
+    linkedin_site_company = search_linkedin(site_company_search, ddgs) if company_info['name'] != 'Not found' else {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
+    time.sleep(random.uniform(1, 3))
+
+    # Site Domain search
+    site_domain_search = (f"site:linkedin.com/company {company_info['domain']}" 
+                         if company_info['domain'] != 'Not found' 
+                         else "Invalid Domain")
+    linkedin_site_domain = search_linkedin(site_domain_search, ddgs) if company_info['domain'] != 'Not found' else {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
+    time.sleep(random.uniform(1, 3))
+
+    return {
+        'Uploaded Company': company,
+        'Website Domain': company_info['domain'],
+        'Company Name': company_info['name'],
+        'LinkedIn Company Name': linkedin_original['linkedin_name'],
+        'Company LinkedIn URL': linkedin_original['linkedin_url'],
+        'LinkedIn URL (Site Company)': linkedin_site_company['linkedin_url'],
+        'LinkedIn URL (Site Domain)': linkedin_site_domain['linkedin_url']
+    }
+
+def load_checkpoint():
+    """Load existing checkpoint if available"""
+    if os.path.exists(CHECKPOINT_FILE):
+        return pd.read_excel(CHECKPOINT_FILE).to_dict('records')
+    return []
+
+def save_checkpoint(results):
+    """Save current progress to checkpoint file"""
+    df = pd.DataFrame(results)
+    df.to_excel(CHECKPOINT_FILE, index=False)
+
+def main(input_file, output_file):
+    """Main processing function with checkpointing and rate limit handling"""
+    # Load checkpoint or initialize
+    results = load_checkpoint()
+    processed_companies = set(r['Uploaded Company'] for r in results)
     
-    uploaded_file = st.file_uploader("Choose file", type=["csv", "txt"])
+    # Read input file
+    if input_file.endswith('.csv'):
+        companies = pd.read_csv(input_file).iloc[:, 0].tolist()
+    else:
+        with open(input_file, 'r') as f:
+            companies = [line.strip() for line in f.readlines()]
+
+    # Filter already processed companies
+    remaining_companies = [c for c in companies if c not in processed_companies]
+    
+    # Initialize progress
+    total_companies = len(remaining_companies)
+    start_idx = len(results)
+    
+    with DDGS() as ddgs:
+        for idx, company in enumerate(remaining_companies, start=1):
+            try:
+                print(f"Processing {start_idx + idx}/{len(companies)}: {company}")
+                result = process_company(company, ddgs)
+                results.append(result)
+                
+                # Save checkpoint every 10 companies
+                if idx % 10 == 0:
+                    save_checkpoint(results)
+                    
+                # Batch delay
+                if idx % REQUESTS_PER_BATCH == 0:
+                    print(f"Completed {idx} requests. Waiting {BATCH_DELAY}s...")
+                    time.sleep(BATCH_DELAY)
+                    
+            except Exception as e:
+                print(f"Critical error processing {company}: {str(e)}")
+                save_checkpoint(results)
+                raise
+
+    # Final save
+    df = pd.DataFrame(results)
+    df.to_excel(output_file, index=False)
+    if os.path.exists(CHECKPOINT_FILE):
+        os.remove(CHECKPOINT_FILE)
+    print(f"Results saved to {output_file}")
+
+# Streamlit UI
+if __name__ == "__main__":
+    st.title("Company Information Search")
+    
+    uploaded_file = st.file_uploader("Upload CSV/TXT file", type=["csv", "txt"])
     
     if uploaded_file:
-        if uploaded_file.name.endswith(".csv"):
-            companies = pd.read_csv(uploaded_file).iloc[:, 0].tolist()[:100]
-        else:
-            companies = [line.decode().strip() for line in uploaded_file.readlines()][:100]
-        
         if st.button("Start Processing"):
-            searcher = EnhancedCompanySearcher()
-            results = []
-            total = len(companies)
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Process in batches with progress
-            for batch_num, i in enumerate(range(0, total, BATCH_SIZE)):
-                batch = companies[i:i+BATCH_SIZE]
-                status_text.text(f"Processing batch {batch_num+1} ({len(batch)} companies)")
-                results += process_batch(searcher, batch)
-                progress_bar.progress((i+BATCH_SIZE)/total)
-                time.sleep(REQUEST_DELAY)
-            
-            # Create and display dataframe
-            df = pd.DataFrame(results).rename(columns={
-                'company': 'Uploaded Company',
-                'domain': 'Website Domain',
-                'website_name': 'Company Name',
-                'linkedin_name': 'LinkedIn Name',
-                'linkedin_url': 'LinkedIn URL'
-            })
-            
-            st.dataframe(df)
-            
-            # Export to Excel
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False)
-            
-            st.download_button(
-                "Download Results",
-                data=output.getvalue(),
-                file_name="enhanced_company_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-if __name__ == "__main__":
-    main()
+            try:
+                # Save uploaded file
+                with open("input_file", "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                # Run main process
+                main("input_file", "results.xlsx")
+                
+                # Show completion
+                st.success("Processing completed!")
+                st.download_button(
+                    label="Download Results",
+                    data=open("results.xlsx", "rb").read(),
+                    file_name="results.xlsx",
+                    mime="application/vnd.ms-excel"
+                )
+                
+            except Exception as e:
+                st.error(f"Processing failed: {str(e)}")
+                if os.path.exists(CHECKPOINT_FILE):
+                    st.warning("Partial results available:")
+                    st.download_button(
+                        label="Download Partial Results",
+                        data=open(CHECKPOINT_FILE, "rb").read(),
+                        file_name="partial_results.xlsx",
+                        mime="application/vnd.ms-excel"
+                    )
