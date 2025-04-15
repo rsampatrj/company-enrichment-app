@@ -29,20 +29,17 @@ def search_company_info(company_name):
         return {'domain': 'Not found', 'name': 'Not found'}
 
 def search_linkedin_info(company_name):
-    """Search for LinkedIn profile using modified search pattern"""
+    """Search for LinkedIn profile using specific Japanese pattern"""
     with DDGS() as ddgs:
         try:
-            # Modified search pattern with "Employees" keyword
+            # Exact pattern match for Japanese company names
             results = ddgs.text(f'site:linkedin.com {company_name} Employees', max_results=1)
             if results:
                 first_result = results[0]
                 linkedin_url = first_result['href']
                 
-                # Enhanced name cleaning logic
-                linkedin_name = first_result['title'].replace('| LinkedIn', '')\
-                                                      .replace('- LinkedIn', '')\
-                                                      .replace('Employees', '')\
-                                                      .strip()
+                # Enhanced cleaning for Japanese company names
+                linkedin_name = first_result['title'].split('|')[0].split('-')[0].replace('Employees', '').strip()
                 return {
                     'linkedin_url': linkedin_url,
                     'linkedin_name': linkedin_name
@@ -52,24 +49,24 @@ def search_linkedin_info(company_name):
         return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
 
 def main():
-    st.title("Company & LinkedIn Finder")
-    st.write("Upload a CSV/text file with company names (one per line)")
+    st.title("企業検索ツール - Company & LinkedIn Finder")
+    st.write("CSVまたはテキストファイルをアップロードしてください (会社名を1行ずつ)")
 
-    uploaded_file = st.file_uploader("Choose a file", type=['csv', 'txt'])
+    uploaded_file = st.file_uploader("ファイルを選択", type=['csv', 'txt'])
     
     if uploaded_file:
         if uploaded_file.name.endswith('.csv'):
             companies = pd.read_csv(uploaded_file).iloc[:, 0].tolist()
         else:
-            companies = [line.decode().strip() for line in uploaded_file.readlines()]
+            companies = [line.decode().utf-8().strip() for line in uploaded_file.readlines()]
 
-        if st.button("Start Search"):
+        if st.button("検索開始"):
             results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
 
             for i, company in enumerate(companies):
-                status_text.text(f"Searching {company}... ({i+1}/{len(companies)})")
+                status_text.text(f"検索中: {company}... ({i+1}/{len(companies)})")
                 
                 # Get company website info
                 company_info = search_company_info(company)
@@ -80,28 +77,28 @@ def main():
                 time.sleep(1)
                 
                 results.append({
-                    'Uploaded Company': company,
-                    'Website Domain': company_info['domain'],
-                    'Company Name': company_info['name'],
-                    'LinkedIn Company Name': linkedin_info['linkedin_name'],
-                    'Company LinkedIn URL': linkedin_info['linkedin_url']
+                    'アップロード企業名': company,
+                    '企業ドメイン': company_info['domain'],
+                    '企業名': company_info['name'],
+                    'LinkedIn企業名': linkedin_info['linkedin_name'],
+                    'LinkedInURL': linkedin_info['linkedin_url']
                 })
                 progress_bar.progress((i+1)/len(companies))
 
             df = pd.DataFrame(results)
-            st.subheader("Results")
+            st.subheader("検索結果")
             st.dataframe(df)
 
-            # Create Excel file in memory
+            # Create Excel file with Japanese encoding
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Results')
+                df.to_excel(writer, index=False, sheet_name='結果')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="Download results as Excel",
+                label="Excelで結果をダウンロード",
                 data=excel_data,
-                file_name='company_info.xlsx',
+                file_name='企業検索結果.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
 
