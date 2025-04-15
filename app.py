@@ -1,4 +1,4 @@
-import streamlit as st
+mport streamlit as st
 from duckduckgo_search import DDGS
 import pandas as pd
 from urllib.parse import urlparse
@@ -28,25 +28,24 @@ def search_company_info(company_name):
             st.error(f"Error searching for {company_name}: {str(e)}")
         return {'domain': 'Not found', 'name': 'Not found'}
 
-def search_linkedin_info_using_domain(domain):
-    """Search for LinkedIn profile using domain instead of company name"""
-    if domain == 'Not found':
-        return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
-
+def search_linkedin_info(company_name):
+    """Search for LinkedIn profile using specific Japanese pattern"""
     with DDGS() as ddgs:
         try:
-            query = f"site:linkedin.com {domain}"
-            results = ddgs.text(query, max_results=1)
+            # Exact pattern match for Japanese company names
+            results = ddgs.text(f'site:linkedin.com {company_name} Employees', max_results=1)
             if results:
                 first_result = results[0]
                 linkedin_url = first_result['href']
-                linkedin_name = first_result['title'].split('|')[0].split('-')[0].strip()
+                
+                # Enhanced cleaning for Japanese company names
+                linkedin_name = first_result['title'].split('|')[0].split('-')[0].replace('Employees', '').strip()
                 return {
                     'linkedin_url': linkedin_url,
                     'linkedin_name': linkedin_name
                 }
         except Exception as e:
-            st.error(f"Error searching LinkedIn for domain {domain}: {str(e)}")
+            st.error(f"Error searching LinkedIn for {company_name}: {str(e)}")
         return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
 
 def main():
@@ -59,7 +58,7 @@ def main():
         if uploaded_file.name.endswith('.csv'):
             companies = pd.read_csv(uploaded_file).iloc[:, 0].tolist()
         else:
-            companies = [line.decode('utf-8').strip() for line in uploaded_file.readlines()]
+            companies = [line.decode().utf-8().strip() for line in uploaded_file.readlines()]
 
         if st.button("検索開始"):
             results = []
@@ -73,8 +72,8 @@ def main():
                 company_info = search_company_info(company)
                 time.sleep(1)
                 
-                # Get LinkedIn info using domain
-                linkedin_info = search_linkedin_info_using_domain(company_info['domain'])
+                # Get LinkedIn info
+                linkedin_info = search_linkedin_info(company)
                 time.sleep(1)
                 
                 results.append({
