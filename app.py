@@ -4,6 +4,7 @@ import pandas as pd
 from urllib.parse import urlparse
 import time
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def extract_domain(url):
     """Extract domain from URL"""
@@ -15,40 +16,66 @@ def extract_domain(url):
 
 def search_company_info(company_name):
     """Search for company website and name using DuckDuckGo"""
-    with DDGS() as ddgs:
-        try:
+    try:
+        with DDGS() as ddgs:
             results = ddgs.text(company_name, max_results=1)
             if results:
                 first_result = results[0]
                 return {
                     'domain': extract_domain(first_result['href']),
-                    'name': first_result['title']
+                    'name': first_result['title'],
+                    'error': None
                 }
-        except Exception as e:
-            st.error(f"Error searching for {company_name}: {str(e)}")
-        return {'domain': 'Not found', 'name': 'Not found'}
+            return {'domain': 'Not found', 'name': 'Not found', 'error': None}
+    except Exception as e:
+        return {'domain': 'Error', 'name': 'Error', 
+                'error': f"Company search error: {str(e)}"}
 
 def search_linkedin_info(company_name):
     """Search for LinkedIn profile using DuckDuckGo"""
-    with DDGS() as ddgs:
-        try:
+    try:
+        with DDGS() as ddgs:
             results = ddgs.text(f"{company_name} | LinkedIn", max_results=1)
             if results:
                 first_result = results[0]
                 linkedin_url = first_result['href']
-                # Clean LinkedIn name from title
                 linkedin_name = first_result['title'].split('|')[0].strip()
                 return {
                     'linkedin_url': linkedin_url,
-                    'linkedin_name': linkedin_name
+                    'linkedin_name': linkedin_name,
+                    'error': None
                 }
-        except Exception as e:
-            st.error(f"Error searching LinkedIn for {company_name}: {str(e)}")
-        return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
+            return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found', 
+                    'error': None}
+    except Exception as e:
+        return {'linkedin_url': 'Error', 'linkedin_name': 'Error', 
+                'error': f"LinkedIn search error: {str(e)}"}
+
+def process_company(company):
+    """Process a single company with rate limiting"""
+    company_info = search_company_info(company)
+    time.sleep(1)  # Maintain rate limit between searches
+    linkedin_info = search_linkedin_info(company)
+    time.sleep(1)
+    
+    errors = []
+    if company_info.get('error'):
+        errors.append(company_info['error'])
+    if linkedin_info.get('error'):
+        errors.append(linkedin_info['error'])
+    
+    return {
+        'Uploaded Company': company,
+        'Website Domain': company_info['domain'],
+        'Company Name': company_info['name'],
+        'LinkedIn Company Name': linkedin_info['linkedin_name'],
+        'Company LinkedIn URL': linkedin_info['linkedin_url'],
+        'Errors': ' | '.join(errors) if errors else None
+    }
 
 def main():
-    st.title("Company & LinkedIn Finder")
-    st.write("Upload a CSV/text file with company names (one per line)")
+    st.title("Bulk Company & LinkedIn Finder")
+    st.write("Upload a CSV/text file with company names (one per line/column)")
 
     uploaded_file = st.file_uploader("Choose a file", type=['csv', 'txt'])
     
@@ -58,45 +85,57 @@ def main():
         else:
             companies = [line.decode().strip() for line in uploaded_file.readlines()]
 
-        if st.button("Start Search"):
+        if st.button("Start Bulk Search (20 concurrent)"):
             results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
+            total_companies = len(companies)
+            
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = {executor.submit(process_company, company): i 
+                          for i, company in enumerate(companies)}
+                
+                results = [None] * len(companies)
+                completed = 0
+                
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        index = futures[future]
+                        results[index] = result
+                        completed += 1
+                        progress = completed / total_companies
+                        progress_bar.progress(progress)
+                        status_text.text(
+                            f"Processed {completed}/{total_companies} companies "
+                            f"({progress:.1%})"
+                        )
+                    except Exception as e:
+                        st.error(f"Error processing company: {str(e)}")
 
-            for i, company in enumerate(companies):
-                status_text.text(f"Searching {company}... ({i+1}/{len(companies)})")
-                
-                # Get company website info
-                company_info = search_company_info(company)
-                time.sleep(1)  # Delay between searches
-                
-                # Get LinkedIn info
-                linkedin_info = search_linkedin_info(company)
-                time.sleep(1)  # Delay between searches
-                
-                results.append({
-                    'Uploaded Company': company,
-                    'Website Domain': company_info['domain'],
-                    'Company Name': company_info['name'],
-                    'LinkedIn Company Name': linkedin_info['linkedin_name'],
-                    'Company LinkedIn URL': linkedin_info['linkedin_url']
-                })
-                progress_bar.progress((i+1)/len(companies))
-
+            # Remove any None results in case of errors
+            results = [r for r in results if r is not None]
+            
             df = pd.DataFrame(results)
             st.subheader("Results")
             st.dataframe(df)
 
-            # Create Excel file in memory
+            # Show errors in expander
+            if 'Errors' in df.columns and df['Errors'].notnull().any():
+                with st.expander("View Errors", expanded=False):
+                    error_df = df[df['Errors'].notnull()][['Uploaded Company', 'Errors']]
+                    st.dataframe(error_df)
+
+            # Download results
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Results')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="Download results as Excel",
+                label="Download Full Results as Excel",
                 data=excel_data,
-                file_name='company_info.xlsx',
+                file_name='bulk_company_info.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
 
