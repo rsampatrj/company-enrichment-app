@@ -36,7 +36,6 @@ def search_linkedin_info(company_name):
             if results:
                 first_result = results[0]
                 linkedin_url = first_result['href']
-                # Clean LinkedIn name from title
                 linkedin_name = first_result['title'].split('|')[0].strip()
                 return {
                     'linkedin_url': linkedin_url,
@@ -45,6 +44,16 @@ def search_linkedin_info(company_name):
         except Exception as e:
             st.error(f"Error searching LinkedIn for {company_name}: {str(e)}")
         return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
+
+def search_linkedin_url(query):
+    """Search for LinkedIn URL using a custom query"""
+    with DDGS() as ddgs:
+        try:
+            results = ddgs.text(query, max_results=1)
+            return results[0]['href'] if results else 'Not found'
+        except Exception as e:
+            st.error(f"Error searching LinkedIn with query '{query}': {str(e)}")
+            return 'Not found'
 
 def main():
     st.title("Company & LinkedIn Finder")
@@ -68,18 +77,29 @@ def main():
                 
                 # Get company website info
                 company_info = search_company_info(company)
-                time.sleep(1)  # Delay between searches
+                time.sleep(1)
                 
-                # Get LinkedIn info
+                # Get original LinkedIn info
                 linkedin_info = search_linkedin_info(company)
-                time.sleep(1)  # Delay between searches
+                time.sleep(1)
+
+                # Get LinkedIn URL using site:linkedin.com + company name
+                linkedin_url_site_company = search_linkedin_url(f'site:linkedin.com {company}')
+                time.sleep(1)
+
+                # Get LinkedIn URL using site:linkedin.com + fetched domain
+                domain = company_info['domain']
+                linkedin_url_site_domain = search_linkedin_url(f'site:linkedin.com {domain}') if domain != 'Not found' else 'Not found'
+                time.sleep(1)
                 
                 results.append({
                     'Uploaded Company': company,
                     'Website Domain': company_info['domain'],
                     'Company Name': company_info['name'],
                     'LinkedIn Company Name': linkedin_info['linkedin_name'],
-                    'Company LinkedIn URL': linkedin_info['linkedin_url']
+                    'Company LinkedIn URL': linkedin_info['linkedin_url'],
+                    'LinkedIn URL (Site Company)': linkedin_url_site_company,
+                    'LinkedIn URL (Site Domain)': linkedin_url_site_domain
                 })
                 progress_bar.progress((i+1)/len(companies))
 
