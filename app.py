@@ -6,6 +6,7 @@ import time
 from io import BytesIO
 
 def extract_domain(url):
+    """Extract domain from URL"""
     parsed = urlparse(url)
     domain = parsed.netloc
     if domain.startswith('www.'):
@@ -27,57 +28,35 @@ def search_company_info(company_name):
             st.error(f"Error searching for {company_name}: {str(e)}")
         return {'domain': 'Not found', 'name': 'Not found'}
 
-def search_linkedin_url(company_name, domain):
-    """Find the best LinkedIn URL using prioritized strategies"""
-    queries = [
-        f'"{company_name}" | LinkedIn',
-        f'site:linkedin.com {company_name}',
-        f'site:linkedin.com {domain}' if domain != 'Not found' else None
-    ]
-    
+def search_linkedin_info(company_name):
+    """Search for LinkedIn profile using DuckDuckGo"""
     with DDGS() as ddgs:
-        for query in filter(None, queries):
-            try:
-                results = ddgs.text(query, max_results=5)
-                for result in results:
-                    url = result['href']
-                    title = result['title'].split('|')[0].split('-')[0].strip()
-
-                    # Preferred pattern
-                    if any(x in url for x in ['/company/', '/school/', '/university/']):
-                        return {
-                            'linkedin_url': url,
-                            'linkedin_name': title,
-                            'confidence': 'High'
-                        }
-
-                # If no ideal match, take the first LinkedIn URL anyway
-                for result in results:
-                    url = result['href']
-                    if "linkedin.com" in url:
-                        title = result['title'].split('|')[0].split('-')[0].strip()
-                        return {
-                            'linkedin_url': url,
-                            'linkedin_name': title,
-                            'confidence': 'Medium'
-                        }
-
-            except Exception as e:
-                st.warning(f"LinkedIn search failed for {query}: {e}")
-    
-    return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found', 'confidence': 'Low'}
+        try:
+            results = ddgs.text(f"{company_name} | LinkedIn", max_results=1)
+            if results:
+                first_result = results[0]
+                linkedin_url = first_result['href']
+                # Clean LinkedIn name from title
+                linkedin_name = first_result['title'].split('|')[0].strip()
+                return {
+                    'linkedin_url': linkedin_url,
+                    'linkedin_name': linkedin_name
+                }
+        except Exception as e:
+            st.error(f"Error searching LinkedIn for {company_name}: {str(e)}")
+        return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
 
 def main():
     st.title("Company & LinkedIn Finder")
-    st.write("Upload a CSV or TXT file (one company name per line).")
+    st.write("Upload a CSV/text file with company names (one per line)")
 
     uploaded_file = st.file_uploader("Choose a file", type=['csv', 'txt'])
-
+    
     if uploaded_file:
         if uploaded_file.name.endswith('.csv'):
             companies = pd.read_csv(uploaded_file).iloc[:, 0].tolist()
         else:
-            companies = [line.decode('utf-8').strip() for line in uploaded_file.readlines()]
+            companies = [line.decode().strip() for line in uploaded_file.readlines()]
 
         if st.button("Start Search"):
             results = []
@@ -85,38 +64,39 @@ def main():
             status_text = st.empty()
 
             for i, company in enumerate(companies):
-                status_text.text(f"Searching: {company}... ({i+1}/{len(companies)})")
-
+                status_text.text(f"Searching {company}... ({i+1}/{len(companies)})")
+                
+                # Get company website info
                 company_info = search_company_info(company)
-                time.sleep(1)
-
-                linkedin_info = search_linkedin_url(company, company_info['domain'])
-                time.sleep(1)
-
+                time.sleep(1)  # Delay between searches
+                
+                # Get LinkedIn info
+                linkedin_info = search_linkedin_info(company)
+                time.sleep(1)  # Delay between searches
+                
                 results.append({
-                    'Uploaded Company Name': company,
-                    'Domain': company_info['domain'],
-                    'Detected Name': company_info['name'],
-                    'LinkedIn Name': linkedin_info['linkedin_name'],
-                    'LinkedIn URL': linkedin_info['linkedin_url'],
-                    'Confidence': linkedin_info.get('confidence', 'Low')
+                    'Uploaded Company': company,
+                    'Website Domain': company_info['domain'],
+                    'Company Name': company_info['name'],
+                    'LinkedIn Company Name': linkedin_info['linkedin_name'],
+                    'Company LinkedIn URL': linkedin_info['linkedin_url']
                 })
-
-                progress_bar.progress((i+1) / len(companies))
+                progress_bar.progress((i+1)/len(companies))
 
             df = pd.DataFrame(results)
             st.subheader("Results")
             st.dataframe(df)
 
+            # Create Excel file in memory
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Results')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="Download Excel",
+                label="Download results as Excel",
                 data=excel_data,
-                file_name='company_linkedin_results.xlsx',
+                file_name='company_info.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
 
