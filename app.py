@@ -12,9 +12,6 @@ def extract_domain(url):
         domain = domain[4:]
     return domain
 
-def is_valid_linkedin_url(url):
-    return any(part in url for part in ['/company/', '/school/', '/university/'])
-
 def search_company_info(company_name):
     """Search for company website and name using DuckDuckGo"""
     with DDGS() as ddgs:
@@ -31,25 +28,44 @@ def search_company_info(company_name):
         return {'domain': 'Not found', 'name': 'Not found'}
 
 def search_linkedin_url(company_name, domain):
-    """Attempt to find a valid LinkedIn URL using multiple strategies"""
+    """Find the best LinkedIn URL using prioritized strategies"""
     queries = [
         f'"{company_name}" | LinkedIn',
         f'site:linkedin.com {company_name}',
         f'site:linkedin.com {domain}' if domain != 'Not found' else None
     ]
-
+    
     with DDGS() as ddgs:
         for query in filter(None, queries):
             try:
-                results = ddgs.text(query, max_results=3)
+                results = ddgs.text(query, max_results=5)
                 for result in results:
                     url = result['href']
-                    if is_valid_linkedin_url(url):
+                    title = result['title'].split('|')[0].split('-')[0].strip()
+
+                    # Preferred pattern
+                    if any(x in url for x in ['/company/', '/school/', '/university/']):
+                        return {
+                            'linkedin_url': url,
+                            'linkedin_name': title,
+                            'confidence': 'High'
+                        }
+
+                # If no ideal match, take the first LinkedIn URL anyway
+                for result in results:
+                    url = result['href']
+                    if "linkedin.com" in url:
                         title = result['title'].split('|')[0].split('-')[0].strip()
-                        return {'linkedin_url': url, 'linkedin_name': title}
+                        return {
+                            'linkedin_url': url,
+                            'linkedin_name': title,
+                            'confidence': 'Medium'
+                        }
+
             except Exception as e:
                 st.warning(f"LinkedIn search failed for {query}: {e}")
-    return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
+    
+    return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found', 'confidence': 'Low'}
 
 def main():
     st.title("Company & LinkedIn Finder")
@@ -82,7 +98,8 @@ def main():
                     'Domain': company_info['domain'],
                     'Detected Name': company_info['name'],
                     'LinkedIn Name': linkedin_info['linkedin_name'],
-                    'LinkedIn URL': linkedin_info['linkedin_url']
+                    'LinkedIn URL': linkedin_info['linkedin_url'],
+                    'Confidence': linkedin_info.get('confidence', 'Low')
                 })
 
                 progress_bar.progress((i+1) / len(companies))
