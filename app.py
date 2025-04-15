@@ -6,12 +6,14 @@ import time
 from io import BytesIO
 
 def extract_domain(url):
-    """Extract domain from URL"""
     parsed = urlparse(url)
     domain = parsed.netloc
     if domain.startswith('www.'):
         domain = domain[4:]
     return domain
+
+def is_valid_linkedin_url(url):
+    return any(part in url for part in ['/company/', '/school/', '/university/'])
 
 def search_company_info(company_name):
     """Search for company website and name using DuckDuckGo"""
@@ -28,78 +30,76 @@ def search_company_info(company_name):
             st.error(f"Error searching for {company_name}: {str(e)}")
         return {'domain': 'Not found', 'name': 'Not found'}
 
-def search_linkedin_info_using_domain(domain):
-    """Search for LinkedIn profile using domain instead of company name"""
-    if domain == 'Not found':
-        return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
+def search_linkedin_url(company_name, domain):
+    """Attempt to find a valid LinkedIn URL using multiple strategies"""
+    queries = [
+        f'"{company_name}" | LinkedIn',
+        f'site:linkedin.com {company_name}',
+        f'site:linkedin.com {domain}' if domain != 'Not found' else None
+    ]
 
     with DDGS() as ddgs:
-        try:
-            query = f"site:linkedin.com {domain}"
-            results = ddgs.text(query, max_results=1)
-            if results:
-                first_result = results[0]
-                linkedin_url = first_result['href']
-                linkedin_name = first_result['title'].split('|')[0].split('-')[0].strip()
-                return {
-                    'linkedin_url': linkedin_url,
-                    'linkedin_name': linkedin_name
-                }
-        except Exception as e:
-            st.error(f"Error searching LinkedIn for domain {domain}: {str(e)}")
-        return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
+        for query in filter(None, queries):
+            try:
+                results = ddgs.text(query, max_results=3)
+                for result in results:
+                    url = result['href']
+                    if is_valid_linkedin_url(url):
+                        title = result['title'].split('|')[0].split('-')[0].strip()
+                        return {'linkedin_url': url, 'linkedin_name': title}
+            except Exception as e:
+                st.warning(f"LinkedIn search failed for {query}: {e}")
+    return {'linkedin_url': 'Not found', 'linkedin_name': 'Not found'}
 
 def main():
-    st.title("企業検索ツール - Company & LinkedIn Finder")
-    st.write("CSVまたはテキストファイルをアップロードしてください (会社名を1行ずつ)")
+    st.title("Company & LinkedIn Finder")
+    st.write("Upload a CSV or TXT file (one company name per line).")
 
-    uploaded_file = st.file_uploader("ファイルを選択", type=['csv', 'txt'])
-    
+    uploaded_file = st.file_uploader("Choose a file", type=['csv', 'txt'])
+
     if uploaded_file:
         if uploaded_file.name.endswith('.csv'):
             companies = pd.read_csv(uploaded_file).iloc[:, 0].tolist()
         else:
             companies = [line.decode('utf-8').strip() for line in uploaded_file.readlines()]
 
-        if st.button("検索開始"):
+        if st.button("Start Search"):
             results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
 
             for i, company in enumerate(companies):
-                status_text.text(f"検索中: {company}... ({i+1}/{len(companies)})")
-                
-                # Get company website info
+                status_text.text(f"Searching: {company}... ({i+1}/{len(companies)})")
+
                 company_info = search_company_info(company)
                 time.sleep(1)
-                
-                # Get LinkedIn info using domain
-                linkedin_info = search_linkedin_info_using_domain(company_info['domain'])
+
+                linkedin_info = search_linkedin_url(company, company_info['domain'])
                 time.sleep(1)
-                
+
                 results.append({
-                    'アップロード企業名': company,
-                    '企業ドメイン': company_info['domain'],
-                    '企業名': company_info['name'],
-                    'LinkedIn企業名': linkedin_info['linkedin_name'],
-                    'LinkedInURL': linkedin_info['linkedin_url']
+                    'Uploaded Company Name': company,
+                    'Domain': company_info['domain'],
+                    'Detected Name': company_info['name'],
+                    'LinkedIn Name': linkedin_info['linkedin_name'],
+                    'LinkedIn URL': linkedin_info['linkedin_url']
                 })
-                progress_bar.progress((i+1)/len(companies))
+
+                progress_bar.progress((i+1) / len(companies))
 
             df = pd.DataFrame(results)
-            st.subheader("検索結果")
+            st.subheader("Results")
             st.dataframe(df)
 
-            # Create Excel file with Japanese encoding
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='結果')
+                df.to_excel(writer, index=False, sheet_name='Results')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="Excelで結果をダウンロード",
+                label="Download Excel",
                 data=excel_data,
-                file_name='企業検索結果.xlsx',
+                file_name='company_linkedin_results.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
 
