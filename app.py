@@ -1,5 +1,5 @@
 import streamlit as st
-from langchain_community.tools import DuckDuckGoSearchRun
+from duckduckgo_search import DDGS
 import pandas as pd
 from urllib.parse import urlparse
 import time
@@ -7,9 +7,9 @@ from io import BytesIO
 import concurrent.futures
 
 # Configuration
-MAX_WORKERS = 5  # Adjust based on your network capacity
-BATCH_SIZE = 20  # Companies processed at once
-REQUEST_DELAY = 1  # Seconds between batches
+MAX_WORKERS = 5
+BATCH_SIZE = 20
+REQUEST_DELAY = 1
 
 def extract_domain(url):
     try:
@@ -21,17 +21,17 @@ def extract_domain(url):
 
 class BulkCompanySearcher:
     def __init__(self):
-        self.search = DuckDuckGoSearchRun()
+        self.ddgs = DDGS()
         
     def search_company(self, company):
         try:
             # Website search
-            website_result = self.search.run(company)
-            website = self.parse_result(website_result)
+            website_result = self.ddgs.text(company, max_results=1)
+            website = website_result[0] if website_result else {}
             
             # LinkedIn search
-            linkedin_result = self.search.run(f"{company} site:linkedin.com/company")
-            linkedin = self.parse_result(linkedin_result, linkedin=True)
+            linkedin_result = self.ddgs.text(f"{company} site:linkedin.com/company", max_results=1)
+            linkedin = linkedin_result[0] if linkedin_result else {}
             
             return {
                 'company': company,
@@ -43,13 +43,6 @@ class BulkCompanySearcher:
         except Exception as e:
             st.error(f"Error processing {company}: {str(e)}")
             return self.empty_result(company)
-
-    def parse_result(self, raw, linkedin=False):
-        lines = [line.strip() for line in raw.split('\n') if line.strip()]
-        for i in range(len(lines)-1):
-            if 'http' in lines[i+1]:
-                return {'title': lines[i], 'href': lines[i+1]}
-        return {'title': 'Not found', 'href': 'Not found'}
 
     def empty_result(self, company):
         return {
