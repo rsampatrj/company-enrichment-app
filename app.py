@@ -29,16 +29,20 @@ def search_company_info(company_name):
         return {'domain': 'Not found', 'name': 'Not found'}
 
 def search_linkedin_info(company_name):
-    """Search for LinkedIn profile using DuckDuckGo with site operator"""
+    """Search for LinkedIn profile using modified search pattern"""
     with DDGS() as ddgs:
         try:
-            # Modified search query with site operator
-            results = ddgs.text(f"site:linkedin.com {company_name}", max_results=1)
+            # Modified search pattern with "Employees" keyword
+            results = ddgs.text(f'site:linkedin.com {company_name} Employees', max_results=1)
             if results:
                 first_result = results[0]
                 linkedin_url = first_result['href']
-                # Clean LinkedIn name from title (modified splitting logic)
-                linkedin_name = first_result['title'].split('|')[0].split(' - ')[0].strip()
+                
+                # Enhanced name cleaning logic
+                linkedin_name = first_result['title'].replace('| LinkedIn', '')\
+                                                      .replace('- LinkedIn', '')\
+                                                      .replace('Employees', '')\
+                                                      .strip()
                 return {
                     'linkedin_url': linkedin_url,
                     'linkedin_name': linkedin_name
