@@ -3,26 +3,27 @@ import asyncio
 import random
 from duckduckgo_search import AsyncDDGS
 
-# Limit the number of concurrent asynchronous requests.
+# Limit concurrent asynchronous requests.
 CONCURRENT_LIMIT = 5
 
 async def search_company(company_name: str, proxies: str = None, semaphore: asyncio.Semaphore = None):
-    """Search for a company's info using an asynchronous query with Tor proxy support."""
+    """Asynchronously search for a company using AsyncDDGS with an optional proxy.
+       A semaphore is used to limit concurrent requests.
+    """
     if semaphore:
         async with semaphore:
-            result = await _search_company(company_name, proxies)
+            return await _search_company(company_name, proxies)
     else:
-        result = await _search_company(company_name, proxies)
-    return result
+        return await _search_company(company_name, proxies)
 
 async def _search_company(company_name: str, proxies: str = None):
-    # Add a small random delay to spread out the requests.
+    # Insert a random delay (1-3 seconds) to reduce the chance of being rate limited
     await asyncio.sleep(random.uniform(1, 3))
     
     try:
-        # Use AsyncDDGS with the given proxies parameter.
+        # Using AsyncDDGS with the provided proxies (e.g., Tor proxy)
         async with AsyncDDGS(proxies=proxies) as ddgs:
-            # Get the first search result for the company.
+            # Perform a text search (you can adjust max_results as needed)
             results = await ddgs.text(company_name, max_results=1)
             if results:
                 return {"company": company_name, "result": results[0]}
@@ -32,30 +33,32 @@ async def _search_company(company_name: str, proxies: str = None):
         return {"company": company_name, "result": f"Error: {e}"}
 
 async def search_all_companies(companies: list, proxies: str = None):
-    """Run asynchronous searches for all companies with a concurrency limit."""
+    """Create tasks for all company searches and run them concurrently using a semaphore."""
     semaphore = asyncio.Semaphore(CONCURRENT_LIMIT)
-    tasks = [search_company(company, proxies=proxies, semaphore=semaphore) for company in companies]
-    results = await asyncio.gather(*tasks)
-    return results
+    tasks = [
+        search_company(company, proxies=proxies, semaphore=semaphore)
+        for company in companies
+    ]
+    return await asyncio.gather(*tasks)
 
 def main():
-    st.title("DuckDuckGo Search Using Tor Proxy")
+    st.title("DuckDuckGo Company Search Using Tor")
     st.write(
-        "This app uses DuckDuckGo to search for information about companies while routing requests via Tor to bypass rate limits. "
-        "Make sure you have the Tor service running (for example, Tor Browser on port 9150)."
+        "This app queries DuckDuckGo for information about companies, using Tor to bypass rate limits. "
+        "Ensure that Tor (or Tor Browser) is running (e.g., on port 9150) before running this app."
     )
     
-    # File uploader: expects a CSV or TXT file containing company names (one per line)
+    # Upload a CSV or TXT file with one company name per line.
     uploaded_file = st.file_uploader("Upload a CSV/TXT file with Company Names", type=["csv", "txt"])
     
-    # Input field for the Tor proxy (if not provided, leave empty to use the default network IP).
+    # Input field for Tor proxy. Default is set to a common Tor Browser proxy address.
     proxy_input = st.text_input("Enter Tor Proxy (e.g., socks5://localhost:9150)", value="socks5://localhost:9150")
     proxies = proxy_input.strip() if proxy_input.strip() != "" else None
-    
+
     if uploaded_file:
         try:
-            data = uploaded_file.getvalue().decode("utf-8")
-            companies = [line.strip() for line in data.splitlines() if line.strip()]
+            file_data = uploaded_file.getvalue().decode("utf-8")
+            companies = [line.strip() for line in file_data.splitlines() if line.strip()]
             st.write("Companies loaded:", companies)
         except Exception as e:
             st.error(f"Error reading file: {e}")
@@ -65,13 +68,14 @@ def main():
             if not companies:
                 st.error("No companies found in the file.")
             else:
-                st.info("Searching companies... This might take a while if there are many requests.")
+                st.info("Searching companies... Please wait.")
                 try:
-                    # Run all company searches asynchronously using Tor as the proxy.
                     results = asyncio.run(search_all_companies(companies, proxies=proxies))
                     st.write("### Search Results")
                     for res in results:
-                        st.markdown(f"**{res['company']}**: {res['result']}")
+                        company = res.get("company", "Unknown Company")
+                        result = res.get("result", "")
+                        st.markdown(f"**{company}**: {result}")
                 except Exception as e:
                     st.error(f"An error occurred during searches: {e}")
 
